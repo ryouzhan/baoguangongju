@@ -31,7 +31,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 仅保留基础按钮样式微调，杜绝任何颜色覆盖导致的文字对比度问题
+# 仅保留基础按钮样式微调，杜绝任何颜色/背景覆盖导致的文字对比度问题
 st.markdown("""
 <style>
 div.stButton > button {
@@ -80,7 +80,39 @@ DEFAULT_CONFIG = {
     }
 }
 
-# ==================== 3. 辅助与算法函数 ====================
+# ==================== 3. 侧边栏（默认折叠，纯工具无废话） ====================
+with st.sidebar:
+    st.subheader("⚙️ 业务配置")
+
+    with st.expander("AirScript 采购单接口", expanded=False):
+        air_webhook = st.text_input(
+            "Webhook 地址",
+            value=DEFAULT_CONFIG["airscript"]["webhook_url"]
+        )
+        air_token = st.text_input(
+            "访问令牌 (Token)",
+            value=DEFAULT_CONFIG["airscript"]["token"],
+            type="password"
+        )
+        if st.button("测试接口", use_container_width=True):
+            try:
+                with st.spinner("测试中..."):
+                    df_test = fetch_purchase_from_airscript(air_webhook, air_token)
+                    st.success(f"连通正常，获取到 {len(df_test)} 条记录")
+            except Exception as e:
+                st.error(f"连接失败: {str(e)}")
+
+    exchange_rate = st.number_input(
+        "美元汇率 (USD/CNY)",
+        min_value=0.1,
+        max_value=20.0,
+        value=7.20,
+        step=0.01,
+        format="%.2f",
+        help="用于采购单单价与申报货值精确换算（无尾差）"
+    )
+
+# ==================== 4. 辅助与算法函数 ====================
 def parse_airscript_response(res_data):
     if isinstance(res_data, dict):
         if "data" in res_data and isinstance(res_data["data"], dict) and "result" in res_data["data"]:
@@ -274,7 +306,7 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
         wb.calculation.calcMode = "manual"
         wb.calculation.calcOnSave = False
         if "输入表格" not in wb.sheetnames:
-            raise ValueError("模板中缺少【输入表格】工作表")
+            raise ValueError("模板中缺少【输入表格】")
         ws = wb["输入表格"]
 
         target_b12 = ws['B12']
@@ -355,11 +387,9 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
             contracts = fba_data_df['合同号'].dropna().astype(str).str.strip().tolist()
             if contracts and contracts[0]: contract_no = contracts[0]
 
-        # 核心整合步骤：自动判定品项数，直接就地执行空白行清理
         actual_items_count = min(max(total_rows, 1), 5)
         apply_template_cleanup_memory(wb, actual_items_count)
 
-        # 规范化命名：直接按 合同号 + 报关单 规范格式命名
         safe_contract = re.sub(r'[/\\:*?"<>|]', '_', contract_no).strip() if contract_no else ""
         safe_fba = str(fba_code).replace("/", "_").replace("\\", "_").strip()
         safe_account = str(account_info).replace("/", "_").replace("\\", "_").strip()
@@ -380,38 +410,6 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
     finally:
         wb.close()
 
-# ==================== 4. 侧边栏（默认收起，纯配置项） ====================
-with st.sidebar:
-    st.subheader("⚙️ 业务配置")
-
-    with st.expander("AirScript 采购单接口", expanded=False):
-        air_webhook = st.text_input(
-            "Webhook 地址",
-            value=DEFAULT_CONFIG["airscript"]["webhook_url"]
-        )
-        air_token = st.text_input(
-            "访问令牌 (Token)",
-            value=DEFAULT_CONFIG["airscript"]["token"],
-            type="password"
-        )
-        if st.button("测试接口", use_container_width=True):
-            try:
-                with st.spinner("测试中..."):
-                    df_test = fetch_purchase_from_airscript(air_webhook, air_token)
-                    st.success(f"连通正常，获取到 {len(df_test)} 条记录")
-            except Exception as e:
-                st.error(f"连接失败: {str(e)}")
-
-    exchange_rate = st.number_input(
-        "美元汇率 (USD/CNY)",
-        min_value=0.1,
-        max_value=20.0,
-        value=7.20,
-        step=0.01,
-        format="%.2f",
-        help="用于采购单单价与申报货值精确换算（数量×单价=金额无尾差）"
-    )
-
 # ==================== 5. 主页面布局 ====================
 st.title("📋 报关协同处理系统")
 
@@ -429,6 +427,15 @@ with tab1:
         key="tab1_delivery",
         help="系统将自动直连云端采购单，匹配品名、HS编码、要素并换算美元货值（无尾差）"
     )
+
+    if delivery_file:
+        d_id = f"{delivery_file.name}_{delivery_file.size}"
+        if st.session_state.get('tab1_file_id') != d_id:
+            st.session_state['tab1_result'] = None
+            st.session_state['tab1_file_id'] = d_id
+    else:
+        st.session_state['tab1_result'] = None
+        st.session_state['tab1_file_id'] = None
 
     if st.button("🚀 开始生成报关资料", type="primary", use_container_width=True, disabled=not delivery_file):
         try:
@@ -658,7 +665,7 @@ with tab1:
             use_container_width=True
         )
 
-# ----------------- TAB 2: FBA 报关数据合并 (单按钮直接导出) -----------------
+# ----------------- TAB 2: FBA 报关数据合并 (单按钮极简交互) -----------------
 with tab2:
     if 'merger_groups' not in st.session_state:
         st.session_state['merger_groups'] = []
@@ -669,6 +676,17 @@ with tab2:
         key="tab2_file",
         help="请上传包含【汇总】工作表的报关文件"
     )
+
+    if fba_file:
+        file_id = f"{fba_file.name}_{fba_file.size}"
+        if st.session_state.get('tab2_file_id') != file_id:
+            st.session_state['merger_groups'] = []
+            st.session_state['tab2_file_id'] = file_id
+            if 'tab2_addr_select' in st.session_state:
+                st.session_state['tab2_addr_select'] = []
+    else:
+        st.session_state['merger_groups'] = []
+        st.session_state['tab2_file_id'] = None
 
     if fba_file:
         try:
@@ -765,7 +783,7 @@ with tab2:
                         st.session_state['merger_groups'] = []
                         st.rerun()
 
-            # 单按钮设计：执行合并后直接触发下载，无需两步
+            # 纯单个按钮：执行合并后直接触发下载，无需两步操作
             if st.session_state['merger_groups']:
                 def compute_merged_file_bytes():
                     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
@@ -846,6 +864,15 @@ with tab3:
             help="包含【汇总】工作表"
         )
 
+    if tpl_file and data_source_file:
+        t3_id = f"{tpl_file.name}_{tpl_file.size}_{data_source_file.name}_{data_source_file.size}"
+        if st.session_state.get('tab3_file_id') != t3_id:
+            st.session_state['tab3_zip'] = None
+            st.session_state['tab3_file_id'] = t3_id
+    else:
+        st.session_state['tab3_zip'] = None
+        st.session_state['tab3_file_id'] = None
+
     if st.button("🚀 套版生成并打包下载", type="primary", use_container_width=True, disabled=not (tpl_file and data_source_file)):
         try:
             tpl_bytes = tpl_file.getvalue()
@@ -922,4 +949,3 @@ with tab3:
         with st.expander(f"查看生成文件清单 ({res3['count']} 个)", expanded=False):
             for f in res3['files']:
                 st.text(f"✓ {f}")
-
