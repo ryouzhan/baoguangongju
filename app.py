@@ -411,12 +411,12 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
         wb.close()
 
 # ==================== 5. 主页面布局 ====================
-st.title("📋 报关协同处理系统")
+st.title("📋 报关工具")
 
 tab1, tab2, tab3 = st.tabs([
     "📦 1. 报关资料在线生成",
     "🔄 2. FBA 报关数据合并",
-    "📑 3. 报关单套打与自动清理"
+    "📑 3. 报关单资料生成"
 ])
 
 # ----------------- TAB 1: 报关资料在线生成 -----------------
