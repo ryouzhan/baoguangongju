@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-SmartCustoms Pro | 跨境出口报关协同中台 (Streamlit Cloud Edition)
-专为部署于 streamlit.io 设计的现代企业级出口报关作业系统。
+SmartCustoms Pro | 报关协同与自动化处理系统 (Streamlit Web Edition)
+专为直接部署于 streamlit.io 设计的现代企业级报关作业平台。
 
 三大核心业务矩阵：
 1. 报关单据生成（WPS 金山文档 AirScript Webhook 云端直连，严密零尾差算法）
 2. FBA 货件智能合并（按物流中心地址与FBA分组汇总聚合，回写汇总表）
-3. 报关单套版直接生成（自动注入模板，就地清空空白行，自动提取合同号重命名，一键打包 ZIP）
+3. 报关单套打直接生成（自动注入模板，就地清空空白行，自动提取合同号重命名，一键打包 ZIP）
 """
 
 import io
@@ -30,135 +30,34 @@ import streamlit as st
 
 # ==================== 1. 页面基础配置 ====================
 st.set_page_config(
-    page_title="SmartCustoms Pro | 跨境出口报关协同中台",
+    page_title="报关协同与自动化处理系统",
     page_icon="📋",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ==================== 2. 现代企业级 SaaS 视觉样式注入 ====================
-ENTERPRISE_CSS = """
+# 仅保留安全通用的微调样式，避免覆盖 Streamlit 底层主题导致文字发白隐形
+SAFE_CSS = """
 <style>
-/* 全局基础设置 */
-.stApp {
-    background-color: #f8fafc;
-    color: #1e293b;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-}
-
-/* 顶部导航标题栏 */
-.app-header {
-    background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
-    padding: 24px 32px;
-    border-radius: 14px;
-    color: #ffffff;
-    box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.25);
-    margin-bottom: 24px;
-}
-.app-title {
-    font-size: 1.85rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 0;
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-.app-subtitle {
-    font-size: 0.95rem;
-    color: #cbd5e1;
-    margin-top: 6px;
-    font-weight: 400;
-}
-
-/* 顶部徽章胶囊 */
-.header-badge-container {
-    display: flex;
-    gap: 10px;
-    margin-top: 14px;
-    flex-wrap: wrap;
-}
-.header-badge {
-    background-color: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(8px);
-    color: #f1f5f9;
-    padding: 4px 12px;
-    border-radius: 9999px;
-    font-size: 0.8rem;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    font-weight: 500;
-}
-
-/* 侧边栏样式定制 */
-[data-testid="stSidebar"] {
-    background-color: #ffffff;
-    border-right: 1px solid #e2e8f0;
-}
-
-/* 选项卡样式优化 */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 10px;
-    background-color: #f1f5f9;
-    padding: 6px;
-    border-radius: 12px;
-    border: 1px solid #e2e8f0;
-}
-.stTabs [data-baseweb="tab"] {
-    height: 44px;
+/* 按钮圆角与交互微调 */
+div.stButton > button {
     border-radius: 8px;
-    color: #475569;
-    font-weight: 500;
-    font-size: 0.95rem;
-    padding: 0 20px;
-    border: none !important;
-}
-.stTabs [aria-selected="true"] {
-    background-color: #ffffff !important;
-    color: #2563eb !important;
     font-weight: 600;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
-
-/* 模块卡片容器 */
-.card-container {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 20px 24px;
-    margin-bottom: 20px;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+/* 优化上传组件边距 */
+[data-testid="stFileUploader"] {
+    padding: 6px 0;
 }
-
-/* 章节小标题 */
-.section-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: #0f172a;
-    margin-bottom: 8px;
-}
-.section-desc {
-    font-size: 0.9rem;
-    color: #64748b;
-    margin-bottom: 18px;
-    line-height: 1.5;
-}
-
-/* 指标卡片 */
+/* 指标卡片视觉微调 */
 [data-testid="stMetric"] {
-    background-color: #f8fafc;
-    border: 1px solid #e2e8f0;
     border-radius: 10px;
-    padding: 12px 16px;
+    padding: 10px 14px;
 }
 </style>
 """
-st.markdown(ENTERPRISE_CSS, unsafe_allow_html=True)
+st.markdown(SAFE_CSS, unsafe_allow_html=True)
 
-# ==================== 3. 默认字段与接口配置 ====================
+# ==================== 2. 默认字段与接口配置 ====================
 DEFAULT_CONFIG = {
     "airscript": {
         "webhook_url": "https://www.kdocs.cn/api/v3/ide/file/cdH0A450EedY/script/V2-6x7HgWruLz4P74YP1PIsVf/sync_task",
@@ -194,7 +93,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-# ==================== 4. AirScript Webhook 数据拉取 ====================
+# ==================== 3. AirScript Webhook 数据拉取 ====================
 def parse_airscript_response(res_data):
     if isinstance(res_data, dict):
         if "data" in res_data and isinstance(res_data["data"], dict) and "result" in res_data["data"]:
@@ -255,7 +154,7 @@ def fetch_purchase_from_airscript(webhook_url, token, timeout=35):
             raise Exception("AirScript 响应成功，但返回的数据表为空！")
         return df
 
-# ==================== 5. Excel 核心样式与处理 ====================
+# ==================== 4. Excel 处理与模板清洗核心算法 ====================
 FOOTER_KEYWORDS = [
     '合计', '总计', 'Total', 'SUM', 'Sum',
     '备注', 'Remark', 'Comments',
@@ -514,11 +413,10 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
     finally:
         wb.close()
 
-# ==================== 6. 侧边栏：全局业务配置 ====================
+# ==================== 5. 侧边栏：配置与接口管理 ====================
 with st.sidebar:
-    st.markdown("### ⚙️ 业务中台配置")
+    st.header("⚙️ 系统业务配置")
     st.caption("Customs Operations Control Panel")
-    st.write("")
 
     with st.expander("🌐 AirScript 采购单直连配置", expanded=False):
         air_webhook = st.text_input(
@@ -530,11 +428,11 @@ with st.sidebar:
             value=DEFAULT_CONFIG["airscript"]["token"],
             type="password"
         )
-        if st.button("⚡ 测试采购单接口连通性", use_container_width=True):
+        if st.button("⚡ 测试接口连通性", use_container_width=True):
             try:
                 with st.spinner("正在请求云端接口..."):
                     test_df = fetch_purchase_from_airscript(air_webhook, air_token)
-                    st.success(f"接口正常！成功获取 {len(test_df)} 条在线记录")
+                    st.success(f"接口正常！已获取 {len(test_df)} 条在线记录")
             except Exception as e:
                 st.error(f"连接失败: {str(e)}")
 
@@ -548,52 +446,32 @@ with st.sidebar:
         help="用于自动将采购单单价/货值折算为美元申报金额（精确至2位小数无尾差）"
     )
 
-    st.markdown("---")
-    st.markdown("#### 📌 运行机制与环境保障")
-    st.caption("✓ **Streamlit Cloud 极简部署**：免本地环境，一键托管在线访问")
-    st.caption("✓ **严密算法**：数量 × 单价 = 金额USD（严格无尾差）")
-    st.caption("✓ **全自动清理**：套版时就地清空空白行并提取合同号重命名")
+    st.divider()
+    st.markdown("#### 📌 运行机制保障")
+    st.write("✓ **Streamlit Cloud 原生支持**：纯内存流计算，无本地文件写入依赖")
+    st.write("✓ **严格数学规整**：数量 × 单价 = 金额USD（严格无尾差）")
+    st.write("✓ **一步成形**：套版时自动清除多余空白行并按合同号重命名")
 
-# ==================== 7. 页面顶部 Header 导航 ====================
-st.markdown("""
-<div class="app-header">
-    <div class="app-title">
-        <span>SmartCustoms Pro</span>
-        <span style="font-size: 1rem; font-weight: 400; opacity: 0.85;">| 跨境出口报关协同中台</span>
-    </div>
-    <div class="app-subtitle">
-        全链路智能化出口报关作业系统 · 云端采购直连 · 数据归集汇总 · 自动化排版套打与就地规范清理
-    </div>
-    <div class="header-badge-container">
-        <span class="header-badge">● 核心引擎在线</span>
-        <span class="header-badge">金山 AirScript 联动</span>
-        <span class="header-badge">零尾差折算</span>
-        <span class="header-badge">套打直接清空空白行</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# ==================== 6. 主界面标题栏 ====================
+st.title("📋 报关协同与自动化处理系统")
+st.caption("跨境出口报关一体化协同中台 · 在线采购直连 · 数据归集汇总 · 自动化排版套打与规范就地清理")
+st.divider()
 
-# 顶部业务选项卡（三大核心功能矩阵，第四功能已完全整合入第三功能）
+# 业务选项卡（三大核心功能矩阵）
 tab1, tab2, tab3 = st.tabs([
-    "📑 1. 报关单据生成 (采购单联动)",
-    "🔗 2. FBA 货件智能合并 (按地址归集)",
-    "📋 3. 报关套打直接生成 (自动清理与重命名)"
+    "📦 1. 报关资料在线生成",
+    "🔄 2. FBA 报关数据合并",
+    "📑 3. 报关单套打与自动清理"
 ])
 
-# ----------------- TAB 1: 报关单据生成 -----------------
+# ----------------- TAB 1: 报关资料在线生成 -----------------
 with tab1:
-    st.markdown('<div class="section-header">📑 报关资料生成器 (在线采购单直连)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-desc">自动通过 Webhook 拉取金山文档最新采购单据，上传本地发货明细表，一键匹配品名、HS编码、申报要素并精确换算美元申报货值（数量×单价=金额严格一致）。</div>', unsafe_allow_html=True)
+    st.subheader("📦 报关资料在线生成器 (采购单云端直连)")
+    st.write("自动通过 Webhook 拉取金山文档最新采购单据，上传发货明细表，自动匹配品名、HS编码、申报要素并换算美元申报货值（保证数量×单价=金额严格一致）。")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        delivery_file = st.file_uploader("选择本地发货表 (.xlsx)", type=["xlsx"], key="tab1_delivery")
-    with col2:
-        st.write("")
-        st.write("")
-        gen_tab1_btn = st.button("🚀 开始生成报关资料", type="primary", use_container_width=True, disabled=not delivery_file)
+    delivery_file = st.file_uploader("上传发货单 Excel 文件 (.xlsx)", type=["xlsx"], key="tab1_delivery")
 
-    if gen_tab1_btn and delivery_file:
+    if st.button("🚀 开始生成报关资料", type="primary", use_container_width=True, disabled=not delivery_file):
         try:
             with st.spinner("正在同步云端采购单并执行精确换算..."):
                 cfg = DEFAULT_CONFIG["customs_doc_generator"]
@@ -813,16 +691,15 @@ with tab1:
         valid_dt = t1_res['detail'][t1_res['detail']["采购单价"] > 0]
         unmatch_count = t1_res['unmatch_count']
 
-        st.markdown("---")
-        st.markdown("##### 📊 业务核算看板")
+        st.divider()
+        st.write("##### 📊 业务核算看板")
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("总货值 (人民币)", f"¥{valid_dt['货值'].sum():,.2f}")
         m2.metric("总金额 (美元)", f"${valid_dt['金额USD'].sum():,.2f}")
         m3.metric("总毛重 (KGS)", f"{valid_dt['外箱总重量(kg)'].sum():,.2f}")
         m4.metric("总体积 (CBM)", f"{valid_dt['外箱总体积(m³)'].sum():,.2f}")
-        m5.metric("待补录 SKU", f"{unmatch_count} 项", delta="异常待补录" if unmatch_count > 0 else "全部匹配正常", delta_color="inverse" if unmatch_count > 0 else "normal")
+        m5.metric("待补录 SKU", f"{unmatch_count} 项", delta="需核查补录" if unmatch_count > 0 else "全部匹配成功", delta_color="inverse" if unmatch_count > 0 else "normal")
 
-        st.write("")
         st.download_button(
             label="📥 下载已生成的报关资料 (.xlsx)",
             data=t1_res['bytes'],
@@ -832,13 +709,13 @@ with tab1:
             use_container_width=True
         )
 
-        st.write("##### 📋 汇总预览")
+        st.write("##### 📋 汇总表数据预览")
         st.dataframe(t1_res['summary'], use_container_width=True)
 
-# ----------------- TAB 2: FBA 货件智能合并 -----------------
+# ----------------- TAB 2: FBA 报关数据合并 -----------------
 with tab2:
-    st.markdown('<div class="section-header">🔗 FBA 报关数据智能合并工具</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-desc">上传包含【汇总】工作表的报关资料，勾选或批量粘贴需要合并归集的 FBA 货件，按品名与单位进行数据合并累加，并将汇总行追加在原表底部。</div>', unsafe_allow_html=True)
+    st.subheader("🔗 FBA 报关数据智能合并工具")
+    st.write("上传包含【汇总】工作表的报关资料，勾选或批量粘贴需要合并归集的 FBA 货件，按品名与单位进行数据合并累加，并将汇总行追加在原表底部。")
 
     if 'merger_groups' not in st.session_state:
         st.session_state['merger_groups'] = []
@@ -877,7 +754,7 @@ with tab2:
                     df_clean[col] = df_clean[col].astype(str).str.strip()
 
             df_clean[addr_col] = df_clean[addr_col].astype(str).apply(
-                lambda x: re.sub(r'[\(（].*?[\)）]', '', x).strip()
+                lambda x: re.sub(r'[\(（].*?[\\)）]', '', x).strip()
             )
             df_clean = df_clean[df_clean[addr_col].notna() & (df_clean[addr_col] != 'nan') & (df_clean[addr_col] != '')]
 
@@ -947,7 +824,7 @@ with tab2:
                         st.session_state['tab2_merged_bytes'] = None
                         st.rerun()
 
-            st.markdown("---")
+            st.divider()
             if st.session_state['merger_groups']:
                 if st.button("⚡ 执行合并归集并导出 Excel", type="primary", use_container_width=True):
                     with st.spinner("正在执行多货件合并归集计算..."):
@@ -1014,8 +891,8 @@ with tab2:
 
 # ----------------- TAB 3: 报关套打直接生成 (集成智能清理与规范重命名) -----------------
 with tab3:
-    st.markdown('<div class="section-header">📋 报关单套打直接生成 (自动清理空白行与合同号规范命名)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-desc">上传模板与数据源，系统自动按 FBA 货件拆分，写入模板【输入表格】，<b>就地自动清除未用空白行并提取合同号直接命名</b>，无需二次手动清理，一键导出成品打包 ZIP。</div>', unsafe_allow_html=True)
+    st.subheader("📑 报关单套打直接生成 (自动清理空白行与合同号规范命名)")
+    st.info("💡 **一步到位机制**：上传模板与数据源后，系统自动按 FBA 货件拆分，写入模板【输入表格】。**就地自动清空报关单、装箱单、发票、合同未用空白行，并提取合同号直接规范命名**，无需二次手动清理，一键生成成品压缩包。")
 
     col_t3_a, col_t3_b = st.columns(2)
     with col_t3_a:
@@ -1023,10 +900,7 @@ with tab3:
     with col_t3_b:
         data_source_file = st.file_uploader("2. 上传数据源清单 (.xlsx)", type=["xlsx"], key="tab3_data")
 
-    st.write("")
-    gen_tab3_btn = st.button("🚀 启动套版直接生成成品报关单", type="primary", use_container_width=True, disabled=not (tpl_file and data_source_file))
-
-    if gen_tab3_btn and tpl_file and data_source_file:
+    if st.button("🚀 启动套版直接生成成品报关单", type="primary", use_container_width=True, disabled=not (tpl_file and data_source_file)):
         try:
             tpl_bytes = tpl_file.getvalue()
             data_bytes = data_source_file.getvalue()
@@ -1098,7 +972,7 @@ with tab3:
 
     if 'tab3_zip' in st.session_state and st.session_state['tab3_zip']:
         res = st.session_state['tab3_zip']
-        st.success(f"✓ 成功直接生成 {res['count']} 份成品报关单套件（已自动完成空白行清理与合同号重命名，无需保留过渡文件）")
+        st.success(f"✓ 成功直接生成 {res['count']} 份成品报关单（已自动完成空白行清理与合同号重命名，无需保留中间过渡文件）")
         st.download_button(
             label=f"📦 下载全部成品报关单压缩包 ({res['count']} 份 .zip)",
             data=res['bytes'],
