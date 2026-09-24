@@ -1,12 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SmartCustoms Pro | 报关协同与自动化处理系统 (Streamlit Web Edition)
-专为直接部署于 streamlit.io 设计的现代企业级报关作业平台。
-
-三大核心业务矩阵：
-1. 报关单据生成（WPS 金山文档 AirScript Webhook 云端直连，严密零尾差算法）
-2. FBA 货件智能合并（按物流中心地址与FBA分组汇总聚合，回写汇总表）
-3. 报关单套打直接生成（自动注入模板，就地清空空白行，自动提取合同号重命名，一键打包 ZIP）
+极简高能、无冗余干扰信息，专为部署于 streamlit.io 设计。
 """
 
 import io
@@ -28,36 +23,28 @@ from openpyxl.styles import Font, Border, Side, Alignment
 import xlsxwriter
 import streamlit as st
 
-# ==================== 1. 页面基础配置 ====================
+# ==================== 1. 页面基础配置 (左侧栏默认折叠) ====================
 st.set_page_config(
-    page_title="报关协同与自动化处理系统",
+    page_title="报关协同系统",
     page_icon="📋",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# 仅保留安全通用的微调样式，避免覆盖 Streamlit 底层主题导致文字发白隐形
-SAFE_CSS = """
+# 仅保留基础按钮样式微调，杜绝任何颜色覆盖导致的文字对比度问题
+st.markdown("""
 <style>
-/* 按钮圆角与交互微调 */
 div.stButton > button {
     border-radius: 8px;
     font-weight: 600;
 }
-/* 优化上传组件边距 */
 [data-testid="stFileUploader"] {
-    padding: 6px 0;
-}
-/* 指标卡片视觉微调 */
-[data-testid="stMetric"] {
-    border-radius: 10px;
-    padding: 10px 14px;
+    padding: 2px 0;
 }
 </style>
-"""
-st.markdown(SAFE_CSS, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# ==================== 2. 默认字段与接口配置 ====================
+# ==================== 2. 默认字段与配置 ====================
 DEFAULT_CONFIG = {
     "airscript": {
         "webhook_url": "https://www.kdocs.cn/api/v3/ide/file/cdH0A450EedY/script/V2-6x7HgWruLz4P74YP1PIsVf/sync_task",
@@ -93,7 +80,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-# ==================== 3. AirScript Webhook 数据拉取 ====================
+# ==================== 3. 辅助与算法函数 ====================
 def parse_airscript_response(res_data):
     if isinstance(res_data, dict):
         if "data" in res_data and isinstance(res_data["data"], dict) and "result" in res_data["data"]:
@@ -106,8 +93,7 @@ def parse_airscript_response(res_data):
         result = res_data
 
     if isinstance(result, list):
-        if len(result) == 0:
-            return pd.DataFrame()
+        if len(result) == 0: return pd.DataFrame()
         first_item = result[0]
         if isinstance(first_item, dict):
             if 'fields' in first_item and isinstance(first_item['fields'], dict):
@@ -154,7 +140,6 @@ def fetch_purchase_from_airscript(webhook_url, token, timeout=35):
             raise Exception("AirScript 响应成功，但返回的数据表为空！")
         return df
 
-# ==================== 4. Excel 处理与模板清洗核心算法 ====================
 FOOTER_KEYWORDS = [
     '合计', '总计', 'Total', 'SUM', 'Sum',
     '备注', 'Remark', 'Comments',
@@ -249,33 +234,25 @@ def is_cell_merged(ws, row, col):
 def clear_row_range(ws, start_row, end_row, start_col, end_col):
     for row in range(start_row, end_row + 1):
         for col in range(start_col, end_col + 1):
-            if is_cell_merged(ws, row, col):
-                continue
+            if is_cell_merged(ws, row, col): continue
             cell = ws.cell(row=row, column=col)
             cell.value = None
             cell.data_type = "n"
-            if hasattr(cell, "border"):
-                cell.border = copy(cell.border)
+            if hasattr(cell, "border"): cell.border = copy(cell.border)
 
 def clear_sequence_rows(ws, start_row, clear_seq, start_col, end_col):
     for seq in clear_seq:
         row_to_clear = start_row + (seq - 1)
-        if row_to_clear > ws.max_row:
-            continue
+        if row_to_clear > ws.max_row: continue
         for col in range(start_col, end_col + 1):
-            if is_cell_merged(ws, row_to_clear, col):
-                continue
+            if is_cell_merged(ws, row_to_clear, col): continue
             cell = ws.cell(row=row_to_clear, column=col)
             cell.value = None
             cell.data_type = "n"
-            if hasattr(cell, "border"):
-                cell.border = copy(cell.border)
+            if hasattr(cell, "border"): cell.border = copy(cell.border)
 
 def apply_template_cleanup_memory(wb, actual_count):
-    """根据实际商品条数（1-5条），就地清理报关单、装箱单、发票、合同未用多余行"""
-    if actual_count not in CLEAR_RULES:
-        return
-    
+    if actual_count not in CLEAR_RULES: return
     rule_set = CLEAR_RULES[actual_count]
     bgd_rule = rule_set.get("报关单")
     if bgd_rule and "报关单" in wb.sheetnames:
@@ -292,15 +269,12 @@ def apply_template_cleanup_memory(wb, actual_count):
                 clear_sequence_rows(sheet_ws, r_start, seq_tuple, c_start, c_end)
 
 def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, account_info):
-    """
-    内存流直出：填充模板、提取合同号、执行空白行清理，直接生成改名后的最终报关 Excel 字节，无需中间未清理过渡文件
-    """
     wb = load_workbook(io.BytesIO(template_bytes), data_only=False, read_only=False)
     try:
         wb.calculation.calcMode = "manual"
         wb.calculation.calcOnSave = False
         if "输入表格" not in wb.sheetnames:
-            raise ValueError("模板中未找到【输入表格】工作表")
+            raise ValueError("模板中缺少【输入表格】工作表")
         ws = wb["输入表格"]
 
         target_b12 = ws['B12']
@@ -332,12 +306,10 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
                 field_col = temp_field_col
                 break
 
-        if header_row == -1:
-            raise ValueError("无法在模板的【输入表格】中识别表头")
+        if header_row == -1: raise ValueError("无法在模板【输入表格】中识别表头")
 
         data_start_row = header_row + 1
         mapped_col_indices = list(field_col.values())
-
         footer_boundary_row = find_footer_boundary(ws, data_start_row, mapped_col_indices)
         clear_data_range(ws, start_row=data_start_row, end_row=footer_boundary_row, col_indices=mapped_col_indices)
 
@@ -363,7 +335,6 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
                 if tm_field in field_col:
                     col_idx = field_col[tm_field]
                     cell_value = row_data[dt_idx]
-
                     if tm_field == '合同号' and not contract_no and cell_value:
                         contract_no = str(cell_value).strip()
 
@@ -382,8 +353,7 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
 
         if not contract_no and '合同号' in fba_data_df.columns:
             contracts = fba_data_df['合同号'].dropna().astype(str).str.strip().tolist()
-            if contracts and contracts[0]:
-                contract_no = contracts[0]
+            if contracts and contracts[0]: contract_no = contracts[0]
 
         # 核心整合步骤：自动判定品项数，直接就地执行空白行清理
         actual_items_count = min(max(total_rows, 1), 5)
@@ -395,13 +365,10 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
         safe_account = str(account_info).replace("/", "_").replace("\\", "_").strip()
 
         name_parts = []
-        if safe_contract:
-            name_parts.append(safe_contract)
+        if safe_contract: name_parts.append(safe_contract)
         name_parts.append("报关单")
-        if safe_account:
-            name_parts.append(safe_account)
-        if safe_fba:
-            name_parts.append(safe_fba)
+        if safe_account: name_parts.append(safe_account)
+        if safe_fba: name_parts.append(safe_fba)
 
         final_filename = "_".join(name_parts) + ".xlsx"
 
@@ -413,14 +380,13 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
     finally:
         wb.close()
 
-# ==================== 5. 侧边栏：配置与接口管理 ====================
+# ==================== 4. 侧边栏（默认收起，纯配置项） ====================
 with st.sidebar:
-    st.header("⚙️ 系统业务配置")
-    st.caption("Customs Operations Control Panel")
+    st.subheader("⚙️ 业务配置")
 
-    with st.expander("🌐 AirScript 采购单直连配置", expanded=False):
+    with st.expander("AirScript 采购单接口", expanded=False):
         air_webhook = st.text_input(
-            "Webhook 接口地址",
+            "Webhook 地址",
             value=DEFAULT_CONFIG["airscript"]["webhook_url"]
         )
         air_token = st.text_input(
@@ -428,36 +394,27 @@ with st.sidebar:
             value=DEFAULT_CONFIG["airscript"]["token"],
             type="password"
         )
-        if st.button("⚡ 测试接口连通性", use_container_width=True):
+        if st.button("测试接口", use_container_width=True):
             try:
-                with st.spinner("正在请求云端接口..."):
-                    test_df = fetch_purchase_from_airscript(air_webhook, air_token)
-                    st.success(f"接口正常！已获取 {len(test_df)} 条在线记录")
+                with st.spinner("测试中..."):
+                    df_test = fetch_purchase_from_airscript(air_webhook, air_token)
+                    st.success(f"连通正常，获取到 {len(df_test)} 条记录")
             except Exception as e:
                 st.error(f"连接失败: {str(e)}")
 
     exchange_rate = st.number_input(
-        "💱 申报美元汇率 (USD/CNY)",
+        "美元汇率 (USD/CNY)",
         min_value=0.1,
         max_value=20.0,
         value=7.20,
         step=0.01,
         format="%.2f",
-        help="用于自动将采购单单价/货值折算为美元申报金额（精确至2位小数无尾差）"
+        help="用于采购单单价与申报货值精确换算（数量×单价=金额无尾差）"
     )
 
-    st.divider()
-    st.markdown("#### 📌 运行机制保障")
-    st.write("✓ **Streamlit Cloud 原生支持**：纯内存流计算，无本地文件写入依赖")
-    st.write("✓ **严格数学规整**：数量 × 单价 = 金额USD（严格无尾差）")
-    st.write("✓ **一步成形**：套版时自动清除多余空白行并按合同号重命名")
+# ==================== 5. 主页面布局 ====================
+st.title("📋 报关协同处理系统")
 
-# ==================== 6. 主界面标题栏 ====================
-st.title("📋 报关协同与自动化处理系统")
-st.caption("跨境出口报关一体化协同中台 · 在线采购直连 · 数据归集汇总 · 自动化排版套打与规范就地清理")
-st.divider()
-
-# 业务选项卡（三大核心功能矩阵）
 tab1, tab2, tab3 = st.tabs([
     "📦 1. 报关资料在线生成",
     "🔄 2. FBA 报关数据合并",
@@ -466,14 +423,16 @@ tab1, tab2, tab3 = st.tabs([
 
 # ----------------- TAB 1: 报关资料在线生成 -----------------
 with tab1:
-    st.subheader("📦 报关资料在线生成器 (采购单云端直连)")
-    st.write("自动通过 Webhook 拉取金山文档最新采购单据，上传发货明细表，自动匹配品名、HS编码、申报要素并换算美元申报货值（保证数量×单价=金额严格一致）。")
-
-    delivery_file = st.file_uploader("上传发货单 Excel 文件 (.xlsx)", type=["xlsx"], key="tab1_delivery")
+    delivery_file = st.file_uploader(
+        "上传发货单 Excel 文件 (.xlsx)",
+        type=["xlsx"],
+        key="tab1_delivery",
+        help="系统将自动直连云端采购单，匹配品名、HS编码、要素并换算美元货值（无尾差）"
+    )
 
     if st.button("🚀 开始生成报关资料", type="primary", use_container_width=True, disabled=not delivery_file):
         try:
-            with st.spinner("正在同步云端采购单并执行精确换算..."):
+            with st.spinner("正在生成..."):
                 cfg = DEFAULT_CONFIG["customs_doc_generator"]
                 p_sku, p_price, p_name, p_unit = cfg["purchase_sku"], cfg["purchase_price"], cfg["purchase_name"], cfg["purchase_unit"]
                 p_hs, p_en, p_elem, p_origin = cfg["purchase_hs"], cfg["purchase_en_name"], cfg["purchase_elements"], cfg["purchase_origin"]
@@ -606,7 +565,7 @@ with tab1:
                 col_widths = [8, 12, 20, 25, 30, 8, 8, 10, 8, 10, 8, 12, 10, 10, 12, 15, 15, 12, 20, 12, 15, 15, 12]
 
                 ws_detail = workbook.add_worksheet("明细")
-                ws_detail.merge_range("A1:W1", f"报关明细数据（含所有SKU，汇率：1美元={exchange_rate}人民币 | 无尾差）", title_fmt)
+                ws_detail.merge_range("A1:W1", f"报关明细数据（汇率：1美元={exchange_rate}人民币 | 无尾差）", title_fmt)
                 for col, h in enumerate(headers): ws_detail.write(1, col, h, header_fmt)
                 for col, w in enumerate(col_widths): ws_detail.set_column(col, col, w)
 
@@ -641,7 +600,7 @@ with tab1:
                     ws_detail.write(r_idx, 22, row["采购单价"], ff)
 
                 ws_summary = workbook.add_worksheet("汇总")
-                ws_summary.merge_range("A1:W1", f"报关汇总数据（仅采购单匹配记录，汇率：1美元={exchange_rate}人民币 | 无尾差）", title_fmt)
+                ws_summary.merge_range("A1:W1", f"报关汇总数据（仅匹配项，汇率：1美元={exchange_rate}人民币 | 无尾差）", title_fmt)
                 for col, h in enumerate(headers): ws_summary.write(1, col, h, header_fmt)
                 for col, w in enumerate(col_widths): ws_summary.set_column(col, col, w)
 
@@ -677,50 +636,39 @@ with tab1:
                 workbook.close()
                 out_buffer.seek(0)
 
-                st.session_state['tab1_data'] = {
+                unmatch_count = (detail["采购单价"] == 0).sum()
+                st.session_state['tab1_result'] = {
                     'bytes': out_buffer.getvalue(),
-                    'summary': summary,
-                    'detail': detail,
-                    'unmatch_count': (detail["采购单价"] == 0).sum()
+                    'unmatch_count': unmatch_count
                 }
         except Exception as e:
             st.error(f"处理失败: {str(e)}")
 
-    if 'tab1_data' in st.session_state and st.session_state['tab1_data'] is not None:
-        t1_res = st.session_state['tab1_data']
-        valid_dt = t1_res['detail'][t1_res['detail']["采购单价"] > 0]
-        unmatch_count = t1_res['unmatch_count']
-
-        st.divider()
-        st.write("##### 📊 业务核算看板")
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("总货值 (人民币)", f"¥{valid_dt['货值'].sum():,.2f}")
-        m2.metric("总金额 (美元)", f"${valid_dt['金额USD'].sum():,.2f}")
-        m3.metric("总毛重 (KGS)", f"{valid_dt['外箱总重量(kg)'].sum():,.2f}")
-        m4.metric("总体积 (CBM)", f"{valid_dt['外箱总体积(m³)'].sum():,.2f}")
-        m5.metric("待补录 SKU", f"{unmatch_count} 项", delta="需核查补录" if unmatch_count > 0 else "全部匹配成功", delta_color="inverse" if unmatch_count > 0 else "normal")
+    if 'tab1_result' in st.session_state and st.session_state['tab1_result']:
+        res1 = st.session_state['tab1_result']
+        if res1['unmatch_count'] > 0:
+            st.warning(f"注意：存在 {res1['unmatch_count']} 项未匹配采购单的 SKU，已在明细红字标注")
 
         st.download_button(
-            label="📥 下载已生成的报关资料 (.xlsx)",
-            data=t1_res['bytes'],
+            label="📥 下载报关资料 (.xlsx)",
+            data=res1['bytes'],
             file_name=f"报关资料_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
             use_container_width=True
         )
 
-        st.write("##### 📋 汇总表数据预览")
-        st.dataframe(t1_res['summary'], use_container_width=True)
-
-# ----------------- TAB 2: FBA 报关数据合并 -----------------
+# ----------------- TAB 2: FBA 报关数据合并 (单按钮直接导出) -----------------
 with tab2:
-    st.subheader("🔗 FBA 报关数据智能合并工具")
-    st.write("上传包含【汇总】工作表的报关资料，勾选或批量粘贴需要合并归集的 FBA 货件，按品名与单位进行数据合并累加，并将汇总行追加在原表底部。")
-
     if 'merger_groups' not in st.session_state:
         st.session_state['merger_groups'] = []
 
-    fba_file = st.file_uploader("上传待合并的报关汇总 Excel 文件", type=["xlsx"], key="tab2_file")
+    fba_file = st.file_uploader(
+        "上传待合并的报关汇总 Excel 文件 (.xlsx)",
+        type=["xlsx"],
+        key="tab2_file",
+        help="请上传包含【汇总】工作表的报关文件"
+    )
 
     if fba_file:
         try:
@@ -739,7 +687,7 @@ with tab2:
 
             for c in must_cols:
                 if c not in df_raw.columns:
-                    st.error(f"模板错误：工作表【汇总】中缺少必须列【{c}】")
+                    st.error(f"缺少必要列: {c}")
                     st.stop()
 
             df_clean = df_raw.dropna(how='all').reset_index(drop=True)
@@ -771,26 +719,22 @@ with tab2:
                     seen_display.add(disp)
                     address_list.append(disp)
                     address_mapping[disp] = addr
-                    if fba_val:
-                        fba_display_map[fba_val] = disp
-
-            st.success(f"✓ 文件解析完成：共 {len(df_clean)} 行有效数据，识别到 {len(address_list)} 个可选配送中心与 FBA 编码")
+                    if fba_val: fba_display_map[fba_val] = disp
 
             col_left, col_right = st.columns(2)
 
             with col_left:
-                st.markdown("**1. 组建合并归集清单**")
                 selected_from_dropdown = st.multiselect(
-                    "下拉选取地址及FBA",
+                    "选取待合并地址及 FBA",
                     options=address_list,
                     key="tab2_addr_select"
                 )
                 pasted_fbas = st.text_area(
-                    "或：批量粘贴 FBA 编号 (每行一个)",
+                    "或：粘贴 FBA 编号 (每行一个)",
                     placeholder="FBA18XXXXXXX\nFBA18YYYYYYY",
-                    height=95
+                    height=70
                 )
-                if st.button("➕ 保存为新归集分组", use_container_width=True):
+                if st.button("➕ 保存为合并组", use_container_width=True):
                     current_items = list(selected_from_dropdown)
                     if pasted_fbas.strip():
                         for line in pasted_fbas.splitlines():
@@ -801,106 +745,108 @@ with tab2:
                                     current_items.append(disp)
                     if current_items:
                         st.session_state['merger_groups'].append(current_items)
-                        st.session_state['tab2_merged_bytes'] = None
                         st.rerun()
                     else:
-                        st.warning("请至少选取或输入一个有效的 FBA 编号")
+                        st.warning("请至少选取或输入一个 FBA 编号")
 
             with col_right:
-                st.markdown("**2. 已编排的分组清单**")
+                st.write(f"**已暂存分组 ({len(st.session_state['merger_groups'])} 组)**")
                 if not st.session_state['merger_groups']:
-                    st.info("尚未创建分组，请在左侧选取后点击保存")
+                    st.caption("暂未添加分组，请在左侧选取并保存")
                 else:
                     for g_idx, grp in enumerate(st.session_state['merger_groups']):
-                        c_a, c_b = st.columns([4, 1])
-                        c_a.write(f"**分组 #{g_idx+1}** ({len(grp)}项): " + "、".join(grp[:2]) + ("..." if len(grp)>2 else ""))
-                        if c_b.button("删除", key=f"del_grp_{g_idx}"):
+                        c_a, c_b = st.columns()
+                        c_a.text(f"组 {g_idx+1}: " + "、".join(grp[:2]) + ("..." if len(grp)>2 else ""))
+                        if c_b.button("✕", key=f"del_grp_{g_idx}", help="删除此组"):
                             st.session_state['merger_groups'].pop(g_idx)
-                            st.session_state['tab2_merged_bytes'] = None
                             st.rerun()
 
-                    if st.button("清空所有已保存分组", type="secondary"):
+                    if st.button("清空所有组", type="secondary"):
                         st.session_state['merger_groups'] = []
-                        st.session_state['tab2_merged_bytes'] = None
                         st.rerun()
 
-            st.divider()
+            # 单按钮设计：执行合并后直接触发下载，无需两步
             if st.session_state['merger_groups']:
-                if st.button("⚡ 执行合并归集并导出 Excel", type="primary", use_container_width=True):
-                    with st.spinner("正在执行多货件合并归集计算..."):
-                        wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-                        ws = wb["汇总"]
+                def compute_merged_file_bytes():
+                    wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
+                    ws = wb["汇总"]
 
-                        for grp in st.session_state['merger_groups']:
-                            valid_addrs = [address_mapping[item] for item in grp if item in address_mapping]
-                            filtered = df_clean[df_clean[addr_col].isin(valid_addrs)].copy()
-                            if filtered.empty: continue
+                    for grp in st.session_state['merger_groups']:
+                        valid_addrs = [address_mapping[item] for item in grp if item in address_mapping]
+                        filtered = df_clean[df_clean[addr_col].isin(valid_addrs)].copy()
+                        if filtered.empty: continue
 
-                            full_fba_list = []
-                            for item in grp:
-                                if '(' in item and ')' in item:
-                                    s_idx = item.rfind('(') + 1
-                                    e_idx = item.rfind(')')
-                                    if e_idx > s_idx: full_fba_list.append(item[s_idx:e_idx].strip())
-                            FULL_FBA = ' '.join(full_fba_list).strip()
+                        full_fba_list = []
+                        for item in grp:
+                            if '(' in item and ')' in item:
+                                s_idx = item.rfind('(') + 1
+                                e_idx = item.rfind(')')
+                                if e_idx > s_idx: full_fba_list.append(item[s_idx:e_idx].strip())
+                        FULL_FBA = ' '.join(full_fba_list).strip()
 
-                            agg_dict = {
-                                '箱数': 'sum', '数量': 'sum', '毛重KGS': 'sum', '净重KGS': 'sum',
-                                '体积': 'sum', '货值': 'sum', '金额USD': 'sum',
-                                'HS编码': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                fba_col: lambda x: FULL_FBA,
-                                '中英文品名': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '申报要素(品牌,材质,用途)': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                'CTNS': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '币制': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '境内货源地': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '供应商': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '合同号': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '账号': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique())
-                            }
-                            agg_dict = {k: v for k, v in agg_dict.items() if k in filtered.columns}
-                            df_group = filtered.groupby([prod_col, unit_col], as_index=False).agg(agg_dict)
+                        agg_dict = {
+                            '箱数': 'sum', '数量': 'sum', '毛重KGS': 'sum', '净重KGS': 'sum',
+                            '体积': 'sum', '货值': 'sum', '金额USD': 'sum',
+                            'HS编码': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            fba_col: lambda x: FULL_FBA,
+                            '中英文品名': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            '申报要素(品牌,材质,用途)': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            'CTNS': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            '币制': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            '境内货源地': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            '供应商': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            '合同号': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                            '账号': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique())
+                        }
+                        agg_dict = {k: v for k, v in agg_dict.items() if k in filtered.columns}
+                        df_group = filtered.groupby([prod_col, unit_col], as_index=False).agg(agg_dict)
 
-                            for c in ['箱数','数量','毛重KGS','净重KGS','体积','货值','金额USD']:
-                                if c in df_group.columns: df_group[c] = df_group[c].round(2)
-                            if '单价' in df_group.columns: df_group['单价'] = ''
-                            df_group[out_addr_col] = ' '.join(grp)
+                        for c in ['箱数','数量','毛重KGS','净重KGS','体积','货值','金额USD']:
+                            if c in df_group.columns: df_group[c] = df_group[c].round(2)
+                        if '单价' in df_group.columns: df_group['单价'] = ''
+                        df_group[out_addr_col] = ' '.join(grp)
 
-                            for _, row in df_group.iterrows():
-                                row_idx = ws.max_row + 1
-                                for col_idx, col_name in enumerate(df_clean.columns, start=1):
-                                    ws.cell(row=row_idx, column=col_idx, value=row.get(col_name, ""))
+                        for _, row in df_group.iterrows():
+                            row_idx = ws.max_row + 1
+                            for col_idx, col_name in enumerate(df_clean.columns, start=1):
+                                ws.cell(row=row_idx, column=col_idx, value=row.get(col_name, ""))
 
-                        merged_buffer = io.BytesIO()
-                        wb.save(merged_buffer)
-                        wb.close()
-                        merged_buffer.seek(0)
-                        st.session_state['tab2_merged_bytes'] = merged_buffer.getvalue()
+                    merged_buffer = io.BytesIO()
+                    wb.save(merged_buffer)
+                    wb.close()
+                    merged_buffer.seek(0)
+                    return merged_buffer.getvalue()
 
-            if st.session_state.get('tab2_merged_bytes'):
                 st.download_button(
-                    label="📥 下载合并完成的报关汇总表 (.xlsx)",
-                    data=st.session_state['tab2_merged_bytes'],
+                    label="⚡ 执行合并并直接下载 Excel",
+                    data=compute_merged_file_bytes(),
                     file_name=f"FBA合并结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary",
                     use_container_width=True
                 )
         except Exception as e:
-            st.error(f"FBA合并失败: {str(e)}")
+            st.error(f"解析失败: {str(e)}")
 
-# ----------------- TAB 3: 报关套打直接生成 (集成智能清理与规范重命名) -----------------
+# ----------------- TAB 3: 报关套打直接生成 (自动清理与重命名) -----------------
 with tab3:
-    st.subheader("📑 报关单套打直接生成 (自动清理空白行与合同号规范命名)")
-    st.info("💡 **一步到位机制**：上传模板与数据源后，系统自动按 FBA 货件拆分，写入模板【输入表格】。**就地自动清空报关单、装箱单、发票、合同未用空白行，并提取合同号直接规范命名**，无需二次手动清理，一键生成成品压缩包。")
-
     col_t3_a, col_t3_b = st.columns(2)
     with col_t3_a:
-        tpl_file = st.file_uploader("1. 上传报关单模板文件 (.xlsx)", type=["xlsx"], key="tab3_template")
+        tpl_file = st.file_uploader(
+            "1. 报关单模板文件 (.xlsx)",
+            type=["xlsx"],
+            key="tab3_template",
+            help="包含【输入表格】及各联报关单"
+        )
     with col_t3_b:
-        data_source_file = st.file_uploader("2. 上传数据源清单 (.xlsx)", type=["xlsx"], key="tab3_data")
+        data_source_file = st.file_uploader(
+            "2. 报关汇总数据源 (.xlsx)",
+            type=["xlsx"],
+            key="tab3_data",
+            help="包含【汇总】工作表"
+        )
 
-    if st.button("🚀 启动套版直接生成成品报关单", type="primary", use_container_width=True, disabled=not (tpl_file and data_source_file)):
+    if st.button("🚀 套版生成并打包下载", type="primary", use_container_width=True, disabled=not (tpl_file and data_source_file)):
         try:
             tpl_bytes = tpl_file.getvalue()
             data_bytes = data_source_file.getvalue()
@@ -916,14 +862,14 @@ with tab3:
             ]
             missing = [c for c in required_fields if c not in df.columns]
             if missing:
-                st.error(f"数据源缺少必要列: {', '.join(missing)}")
+                st.error(f"缺少必要列: {', '.join(missing)}")
                 st.stop()
 
             df = df[required_fields].dropna(how='all').reset_index(drop=True)
             fba_groups = df.groupby('FBA编号', dropna=False)
 
             zip_buffer = io.BytesIO()
-            pbar = st.progress(0, text="正在批量填充并就地清理报关单...")
+            pbar = st.progress(0, text="正在处理...")
 
             total_groups = len(fba_groups)
             success_count = 0
@@ -940,7 +886,6 @@ with tab3:
                     grp = grp.copy()
                     grp.loc[:, 'FBA编号'] = final_fba
 
-                    # 一步到位：填充 + 空白行清理 + 合同号规范命名
                     final_name, final_bytes, items_cnt = fill_and_clean_template_memory(
                         template_bytes=tpl_bytes,
                         fba_data_df=grp,
@@ -949,38 +894,31 @@ with tab3:
                     )
 
                     zip_file.writestr(final_name, final_bytes)
-                    generated_file_details.append({
-                        "文件名": final_name,
-                        "FBA编号": final_fba,
-                        "账号": account_val,
-                        "有效品项数": f"{items_cnt} 项",
-                        "状态": "已就地清空空白行并完成命名"
-                    })
-
+                    generated_file_details.append(final_name)
                     success_count += 1
-                    pbar.progress(int(idx / total_groups * 100), text=f"[{idx}/{total_groups}] 已生成成品: {final_name}")
+                    pbar.progress(int(idx / total_groups * 100), text=f"[{idx}/{total_groups}] {final_name}")
 
-            pbar.progress(100, text="批量套模板并自动清理全部完成！")
+            pbar.progress(100, text="完成！")
             zip_buffer.seek(0)
             st.session_state['tab3_zip'] = {
                 'bytes': zip_buffer.getvalue(),
                 'count': success_count,
-                'details': generated_file_details
+                'files': generated_file_details
             }
         except Exception as e:
-            st.error(f"批量生成失败: {str(e)}")
+            st.error(f"处理失败: {str(e)}")
 
     if 'tab3_zip' in st.session_state and st.session_state['tab3_zip']:
-        res = st.session_state['tab3_zip']
-        st.success(f"✓ 成功直接生成 {res['count']} 份成品报关单（已自动完成空白行清理与合同号重命名，无需保留中间过渡文件）")
+        res3 = st.session_state['tab3_zip']
         st.download_button(
-            label=f"📦 下载全部成品报关单压缩包 ({res['count']} 份 .zip)",
-            data=res['bytes'],
-            file_name=f"成品报关单批量打包_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+            label=f"📦 下载全部成品报关单 ({res3['count']} 份 .zip)",
+            data=res3['bytes'],
+            file_name=f"成品报关单_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
             mime="application/zip",
             type="primary",
             use_container_width=True
         )
 
-        with st.expander("📄 查看已生成的成品文件清单", expanded=True):
-            st.dataframe(pd.DataFrame(res['details']), use_container_width=True)
+        with st.expander(f"查看生成文件清单 ({res3['count']} 个)", expanded=False):
+            for f in res3['files']:
+                st.text(f"✓ {f}")
