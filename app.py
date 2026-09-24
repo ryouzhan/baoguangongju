@@ -11,7 +11,8 @@ import json
 import zipfile
 import urllib.request
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar
 from copy import copy
 
 import numpy as np
@@ -300,7 +301,52 @@ def apply_template_cleanup_memory(wb, actual_count):
                 sheet_ws = wb[sheet]
                 clear_sequence_rows(sheet_ws, r_start, seq_tuple, c_start, c_end)
 
-def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, account_info):
+
+def extract_date_from_contract(contract_str):
+    if not contract_str:
+        return None
+    m8 = re.search(r'(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', str(contract_str))
+    if m8:
+        y, m, d = int(m8.group(1)), int(m8.group(2)), int(m8.group(3))
+        return datetime(y, m, d)
+    m6 = re.search(r'([2-9]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', str(contract_str))
+    if m6:
+        y, m, d = 2000 + int(m6.group(1)), int(m6.group(2)), int(m6.group(3))
+        return datetime(y, m, d)
+    return None
+
+def calc_customs_dates(base_dt):
+    y = base_dt.year
+    m = base_dt.month - 1
+    if m == 0:
+        m = 12
+        y -= 1
+    max_d = calendar.monthrange(y, m)[1]
+    d = min(base_dt.day, max_d)
+    contract_dt = datetime(y, m, d)
+
+    invoice_dt = contract_dt + timedelta(days=7)
+    return contract_dt.strftime('%Y-%m-%d'), invoice_dt.strftime('%Y-%m-%d')
+
+def update_template_dates(ws, contract_date_str, invoice_date_str):
+    if not contract_date_str and not invoice_date_str:
+        return
+    for r in range(1, 40):
+        for c in range(1, 10):
+            cell_obj = ws.cell(row=r, column=c)
+            real_cell = get_top_left_cell(ws, cell_obj)
+            val_norm = normalize_header(real_cell.value)
+            if val_norm == '合同时间' and contract_date_str:
+                target = ws.cell(row=r, column=c + 1)
+                get_top_left_cell(ws, target).value = contract_date_str
+            elif val_norm == '发票日期' and invoice_date_str:
+                target = ws.cell(row=r, column=c + 1)
+                get_top_left_cell(ws, target).value = invoice_date_str
+            elif val_norm == '装运日期' and invoice_date_str:
+                target = ws.cell(row=r, column=c + 1)
+                get_top_left_cell(ws, target).value = invoice_date_str
+
+def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, account_info, manual_contract_date=None, manual_invoice_date=None, auto_calc_dates=True):
     wb = load_workbook(io.BytesIO(template_bytes), data_only=False, read_only=False)
     try:
         wb.calculation.calcMode = "manual"
@@ -387,6 +433,23 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
             contracts = fba_data_df['合同号'].dropna().astype(str).str.strip().tolist()
             if contracts and contracts[0]: contract_no = contracts[0]
 
+        final_contract_date = ''
+        final_invoice_date = ''
+        if auto_calc_dates:
+            dt = extract_date_from_contract(contract_no)
+            if dt:
+                final_contract_date, final_invoice_date = calc_customs_dates(dt)
+            elif manual_contract_date and manual_invoice_date:
+                final_contract_date = manual_contract_date
+                final_invoice_date = manual_invoice_date
+        else:
+            if manual_contract_date and manual_invoice_date:
+                final_contract_date = manual_contract_date
+                final_invoice_date = manual_invoice_date
+
+        if final_contract_date and final_invoice_date:
+            update_template_dates(ws, final_contract_date, final_invoice_date)
+
         actual_items_count = min(max(total_rows, 1), 5)
         apply_template_cleanup_memory(wb, actual_items_count)
 
@@ -406,17 +469,17 @@ def fill_and_clean_template_memory(template_bytes, fba_data_df, fba_code, accoun
         out_stream = io.BytesIO()
         wb.save(out_stream)
         out_stream.seek(0)
-        return final_filename, out_stream.getvalue(), actual_items_count
+        return final_filename, out_stream.getvalue(), actual_items_count, (final_contract_date, final_invoice_date)
     finally:
         wb.close()
 
 # ==================== 5. 主页面布局 ====================
-st.title("📋 报关工具")
+st.title("📋 报关协同处理系统")
 
 tab1, tab2, tab3 = st.tabs([
     "📦 1. 报关资料在线生成",
     "🔄 2. FBA 报关数据合并",
-    "📑 3. 报关单资料生成"
+    "📑 3. 报关单套打与自动清理"
 ])
 
 # ----------------- TAB 1: 报关资料在线生成 -----------------
@@ -878,54 +941,122 @@ with tab2:
         except Exception as e:
             st.error(f"解析失败: {str(e)}")
 
-# ----------------- TAB 3: 报关套打直接生成 (自动清理与重命名) -----------------
+# ----------------- TAB 3: 报关套打直接生成 (在线模板与智能日期) -----------------
 with tab3:
+    template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+    os.makedirs(template_dir, exist_ok=True)
+    preset_templates = sorted([f for f in os.listdir(template_dir) if f.endswith(".xlsx") and not f.startswith("~$")])
+
     col_t3_a, col_t3_b = st.columns(2)
+    tpl_bytes = None
+    tpl_display_name = ""
+
     with col_t3_a:
-        tpl_file = st.file_uploader(
-            "1. 报关单模板文件 (.xlsx)",
-            type=["xlsx"],
-            key="tab3_template",
-            help="包含【输入表格】及各联报关单"
-        )
+        st.markdown("**1. 报关单模板选择**")
+        if preset_templates:
+            tpl_choice = st.selectbox(
+                "选择在线模板 (.xlsx)",
+                options=preset_templates + ["➕ 上传新模板到库..."],
+                key="tab3_tpl_select"
+            )
+            if tpl_choice == "➕ 上传新模板到库...":
+                uploaded_tpl = st.file_uploader("上传新模板 (.xlsx)", type=["xlsx"], key="tab3_upload_tpl")
+                save_to_lib = st.checkbox("保存到模板库 (下次可直接在下拉列表选择)", value=True)
+                if uploaded_tpl:
+                    tpl_bytes = uploaded_tpl.getvalue()
+                    tpl_display_name = uploaded_tpl.name
+                    if save_to_lib:
+                        save_dest = os.path.join(template_dir, uploaded_tpl.name)
+                        if not os.path.exists(save_dest):
+                            with open(save_dest, "wb") as f:
+                                f.write(tpl_bytes)
+                            st.success(f"已存入模板库: {uploaded_tpl.name}")
+            else:
+                tpl_path = os.path.join(template_dir, tpl_choice)
+                with open(tpl_path, "rb") as f:
+                    tpl_bytes = f.read()
+                tpl_display_name = tpl_choice
+                st.caption(f"已选用模板: `{tpl_choice}`")
+        else:
+            uploaded_tpl = st.file_uploader(
+                "上传报关单模板文件 (.xlsx)",
+                type=["xlsx"],
+                key="tab3_upload_tpl",
+                help="包含【输入表格】及各联报关单"
+            )
+            save_to_lib = st.checkbox("保存到模板库 (下次可直接在下拉列表选择，无需重复上传)", value=True)
+            if uploaded_tpl:
+                tpl_bytes = uploaded_tpl.getvalue()
+                tpl_display_name = uploaded_tpl.name
+                if save_to_lib:
+                    save_dest = os.path.join(template_dir, uploaded_tpl.name)
+                    with open(save_dest, "wb") as f:
+                        f.write(tpl_bytes)
+                    st.success("已成功保存至在线模板库！下次可直接下拉选择。")
+
     with col_t3_b:
+        st.markdown("**2. 报关汇总数据源**")
         data_source_file = st.file_uploader(
-            "2. 报关汇总数据源 (.xlsx)",
+            "上传报关汇总数据源 (.xlsx)",
             type=["xlsx"],
             key="tab3_data",
             help="包含【汇总】工作表"
         )
 
-    if tpl_file and data_source_file:
-        t3_id = f"{tpl_file.name}_{tpl_file.size}_{data_source_file.name}_{data_source_file.size}"
-        if st.session_state.get('tab3_file_id') != t3_id:
-            st.session_state['tab3_zip'] = None
-            st.session_state['tab3_file_id'] = t3_id
-    else:
-        st.session_state['tab3_zip'] = None
-        st.session_state['tab3_file_id'] = None
+    with st.expander("📅 报关单日期规则配置 (自动推算合同时间与发票/装运日期)", expanded=True):
+        c_date_mode, c_date_info = st.columns([1, 1])
+        with c_date_mode:
+            date_calc_mode = st.radio(
+                "日期计算方式",
+                ["自动按合同号推算（推荐）", "手动指定固定日期"],
+                key="tab3_date_mode"
+            )
 
-    if st.button("🚀 套版生成并打包下载", type="primary", use_container_width=True, disabled=not (tpl_file and data_source_file)):
+        auto_calc_dates = (date_calc_mode == "自动按合同号推算（推荐）")
+        manual_c_date = None
+        manual_i_date = None
+
+        if auto_calc_dates:
+            with c_date_info:
+                st.info(
+                    "💡 **自动推算规则**：\n" +
+                    "- 自动提取合同号中的日期（如 `SY20260906A-1` 提取 `2026-09-06`）\n" +
+                    "- **合同时间**：早 1 个月（`2026-08-06`）\n" +
+                    "- **发票日期与装运日期**：合同时间晚 7 天（`2026-08-13`）\n" +
+                    "- 自动写入【输入表格】对应单元格并联动至所有报关单单据"
+                )
+        else:
+            with c_date_info:
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    d_c = st.date_input("合同时间", value=datetime.now())
+                    manual_c_date = d_c.strftime("%Y-%m-%d")
+                with col_d2:
+                    d_i = st.date_input("发票与装运日期", value=datetime.now() + timedelta(days=7))
+                    manual_i_date = d_i.strftime("%Y-%m-%d")
+
+    can_generate = (tpl_bytes is not None) and (data_source_file is not None)
+
+    if st.button("🚀 套版生成并打包下载", type="primary", use_container_width=True, disabled=not can_generate):
         try:
-            tpl_bytes = tpl_file.getvalue()
             data_bytes = data_source_file.getvalue()
 
             header_idx = find_real_header_row_from_bytes(data_bytes, "汇总")
-            df = pd.read_excel(io.BytesIO(data_bytes), sheet_name="汇总", header=header_idx, engine='openpyxl')
+            df = pd.read_excel(io.BytesIO(data_bytes), sheet_name="汇总", header=header_idx, engine="openpyxl")
             df.columns = [normalize_header(c) for c in df.columns]
 
             required_fields = [
-                '账号', '合同号', 'HS编码', '中文品名', '中英文品名', '申报要素(品牌,材质,用途)',
-                '箱数', 'CTNS', '数量', '单位', '单价', '金额USD',
-                '毛重KGS', '净重KGS', '体积', '境内货源地', 'FBA编号'
+                "账号", "合同号", "HS编码", "中文品名", "中英文品名", "申报要素(品牌,材质,用途)",
+                "箱数", "CTNS", "数量", "单位", "单价", "金额USD",
+                "毛重KGS", "净重KGS", "体积", "境内货源地", "FBA编号"
             ]
             missing = [c for c in required_fields if c not in df.columns]
             if missing:
                 st.error(f"缺少必要列: {', '.join(missing)}")
                 st.stop()
 
-            df = df[required_fields].dropna(how='all').reset_index(drop=True)
-            fba_groups = df.groupby('FBA编号', dropna=False)
+            df = df[required_fields].dropna(how="all").reset_index(drop=True)
+            fba_groups = df.groupby("FBA编号", dropna=False)
 
             zip_buffer = io.BytesIO()
             pbar = st.progress(0, text="正在处理...")
@@ -934,50 +1065,55 @@ with tab3:
             success_count = 0
             generated_file_details = []
 
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 for idx, (fba, grp) in enumerate(fba_groups, start=1):
                     final_fba = fba if (pd.notna(fba) and str(fba).strip()) else generate_unique_fba_code(idx)
                     account_val = ""
-                    if '账号' in grp.columns and not grp['账号'].isnull().all():
-                        first_val = grp['账号'].iloc[0]
+                    if "账号" in grp.columns and not grp["账号"].isnull().all():
+                        first_val = grp["账号"].iloc[0]
                         account_val = str(first_val) if pd.notna(first_val) else ""
 
                     grp = grp.copy()
-                    grp.loc[:, 'FBA编号'] = final_fba
+                    grp.loc[:, "FBA编号"] = final_fba
 
-                    final_name, final_bytes, items_cnt = fill_and_clean_template_memory(
+                    final_name, final_bytes, items_cnt, dates_info = fill_and_clean_template_memory(
                         template_bytes=tpl_bytes,
                         fba_data_df=grp,
                         fba_code=final_fba,
-                        account_info=account_val
+                        account_info=account_val,
+                        manual_contract_date=manual_c_date,
+                        manual_invoice_date=manual_i_date,
+                        auto_calc_dates=auto_calc_dates
                     )
 
                     zip_file.writestr(final_name, final_bytes)
-                    generated_file_details.append(final_name)
+                    c_d, i_d = dates_info
+                    date_tag = f"合同: {c_d} | 发票: {i_d}" if c_d else "原模板日期"
+                    generated_file_details.append(f"{final_name} ({date_tag} | {items_cnt}品项)")
                     success_count += 1
                     pbar.progress(int(idx / total_groups * 100), text=f"[{idx}/{total_groups}] {final_name}")
 
             pbar.progress(100, text="完成！")
             zip_buffer.seek(0)
-            st.session_state['tab3_zip'] = {
-                'bytes': zip_buffer.getvalue(),
-                'count': success_count,
-                'files': generated_file_details
+            st.session_state["tab3_zip"] = {
+                "bytes": zip_buffer.getvalue(),
+                "count": success_count,
+                "files": generated_file_details
             }
         except Exception as e:
             st.error(f"处理失败: {str(e)}")
 
-    if 'tab3_zip' in st.session_state and st.session_state['tab3_zip']:
-        res3 = st.session_state['tab3_zip']
+    if "tab3_zip" in st.session_state and st.session_state["tab3_zip"]:
+        res3 = st.session_state["tab3_zip"]
         st.download_button(
             label=f"📦 下载全部成品报关单 ({res3['count']} 份 .zip)",
-            data=res3['bytes'],
+            data=res3["bytes"],
             file_name=f"成品报关单_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
             mime="application/zip",
             type="primary",
             use_container_width=True
         )
 
-        with st.expander(f"查看生成文件清单 ({res3['count']} 个)", expanded=False):
-            for f in res3['files']:
+        with st.expander(f"查看生成文件清单 ({res3['count']} 个)", expanded=True):
+            for f in res3["files"]:
                 st.text(f"✓ {f}")
