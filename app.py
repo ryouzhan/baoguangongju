@@ -479,7 +479,7 @@ st.title("📋 报关协同处理系统")
 tab1, tab2, tab3 = st.tabs([
     "📦 1. 报关资料在线生成",
     "🔄 2. FBA 报关数据合并",
-    "📑 3. 报关单套打与自动清理"
+    "📑 3. 报关资料生成"
 ])
 
 # ----------------- TAB 1: 报关资料在线生成 -----------------
@@ -1019,7 +1019,7 @@ with tab3:
         if auto_calc_dates:
             with c_date_info:
                 st.info(
-                    "💡 **By Ryou**：\n" 
+                    "💡 **By Ryou**" 
                 )
         else:
             with c_date_info:
