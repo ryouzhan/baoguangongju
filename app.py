@@ -1020,7 +1020,7 @@ with tab3:
         if auto_calc_dates:
             with c_date_info:
                 st.info(
-                    "💡 **自动推算规则**" 
+                    "💡 **By Ryou**" 
                 )
         else:
             with c_date_info:
