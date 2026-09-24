@@ -325,7 +325,8 @@ def calc_customs_dates(base_dt):
     d = min(base_dt.day, max_d)
     contract_dt = datetime(y, m, d)
 
-    invoice_dt = contract_dt + timedelta(days=7)
+    # 发票日期与装运日期：合同号里面的时间往后延 10 天
+    invoice_dt = base_dt + timedelta(days=10)
     return contract_dt.strftime('%Y-%m-%d'), invoice_dt.strftime('%Y-%m-%d')
 
 def update_template_dates(ws, contract_date_str, invoice_date_str):
@@ -479,7 +480,7 @@ st.title("📋 报关协同处理系统")
 tab1, tab2, tab3 = st.tabs([
     "📦 1. 报关资料在线生成",
     "🔄 2. FBA 报关数据合并",
-    "📑 3. 报关资料生成"
+    "📑 3. 报关单套打与自动清理"
 ])
 
 # ----------------- TAB 1: 报关资料在线生成 -----------------
@@ -1019,7 +1020,11 @@ with tab3:
         if auto_calc_dates:
             with c_date_info:
                 st.info(
-                    "💡 **By Ryou**" 
+                    "💡 **自动推算规则**：\n" +
+                    "- 自动提取合同号中的日期（如 `SY20260906A-1` 提取 `2026-09-06`）\n" +
+                    "- **合同时间**：早 1 个月（`2026-08-06`）\n" +
+                    "- **发票日期与装运日期**：合同号日期往后延 10 天（`2026-09-16`）\n" +
+                    "- 自动写入【输入表格】对应单元格并联动至所有报关单单据"
                 )
         else:
             with c_date_info:
@@ -1028,7 +1033,7 @@ with tab3:
                     d_c = st.date_input("合同时间", value=datetime.now())
                     manual_c_date = d_c.strftime("%Y-%m-%d")
                 with col_d2:
-                    d_i = st.date_input("发票与装运日期", value=datetime.now() + timedelta(days=7))
+                    d_i = st.date_input("发票与装运日期", value=datetime.now() + timedelta(days=10))
                     manual_i_date = d_i.strftime("%Y-%m-%d")
 
     can_generate = (tpl_bytes is not None) and (data_source_file is not None)
