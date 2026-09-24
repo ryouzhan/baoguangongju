@@ -755,7 +755,7 @@ with tab2:
                     st.caption("暂未添加分组，请在左侧选取并保存")
                 else:
                     for g_idx, grp in enumerate(st.session_state['merger_groups']):
-                        c_a, c_b = st.columns()
+                        c_a, c_b = st.columns([5, 1])
                         c_a.text(f"组 {g_idx+1}: " + "、".join(grp[:2]) + ("..." if len(grp)>2 else ""))
                         if c_b.button("✕", key=f"del_grp_{g_idx}", help="删除此组"):
                             st.session_state['merger_groups'].pop(g_idx)
@@ -922,3 +922,4 @@ with tab3:
         with st.expander(f"查看生成文件清单 ({res3['count']} 个)", expanded=False):
             for f in res3['files']:
                 st.text(f"✓ {f}")
+
