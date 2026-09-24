@@ -480,7 +480,7 @@ st.title("📋 报关协同处理系统")
 tab1, tab2, tab3 = st.tabs([
     "📦 1. 报关资料在线生成",
     "🔄 2. FBA 报关数据合并",
-    "📑 3. 报关单套打与自动清理"
+    "📑 3. 报关资料生成"
 ])
 
 # ----------------- TAB 1: 报关资料在线生成 -----------------
@@ -1004,7 +1004,7 @@ with tab3:
             help="包含【汇总】工作表"
         )
 
-    with st.expander("📅 报关单日期规则配置 (自动推算合同时间与发票/装运日期)", expanded=True):
+    with st.expander("📅 报关单日期规则配置", expanded=True):
         c_date_mode, c_date_info = st.columns([1, 1])
         with c_date_mode:
             date_calc_mode = st.radio(
@@ -1020,11 +1020,7 @@ with tab3:
         if auto_calc_dates:
             with c_date_info:
                 st.info(
-                    "💡 **自动推算规则**：\n" +
-                    "- 自动提取合同号中的日期（如 `SY20260906A-1` 提取 `2026-09-06`）\n" +
-                    "- **合同时间**：早 1 个月（`2026-08-06`）\n" +
-                    "- **发票日期与装运日期**：合同号日期往后延 10 天（`2026-09-16`）\n" +
-                    "- 自动写入【输入表格】对应单元格并联动至所有报关单单据"
+                    "💡 **自动推算规则**" 
                 )
         else:
             with c_date_info:
