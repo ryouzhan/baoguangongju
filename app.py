@@ -1019,8 +1019,7 @@ with tab3:
         if auto_calc_dates:
             with c_date_info:
                 st.info(
-                    "💡 **阿巴阿巴阿巴**：\n" +
-                   
+                    "💡 **阿巴阿巴阿巴**：\n" 
                 )
         else:
             with c_date_info:
