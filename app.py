@@ -81,39 +81,6 @@ DEFAULT_CONFIG = {
     }
 }
 
-# ==================== 3. 侧边栏（默认折叠，纯工具无废话） ====================
-with st.sidebar:
-    st.subheader("⚙️ 业务配置")
-
-    with st.expander("AirScript 采购单接口", expanded=False):
-        air_webhook = st.text_input(
-            "Webhook 地址",
-            value=DEFAULT_CONFIG["airscript"]["webhook_url"]
-        )
-        air_token = st.text_input(
-            "访问令牌 (Token)",
-            value=DEFAULT_CONFIG["airscript"]["token"],
-            type="password"
-        )
-        if st.button("测试接口", use_container_width=True):
-            try:
-                with st.spinner("测试中..."):
-                    df_test = fetch_purchase_from_airscript(air_webhook, air_token)
-                    st.success(f"连通正常，获取到 {len(df_test)} 条记录")
-            except Exception as e:
-                st.error(f"连接失败: {str(e)}")
-
-    exchange_rate = st.number_input(
-        "美元汇率 (USD/CNY)",
-        min_value=0.1,
-        max_value=20.0,
-        value=7.20,
-        step=0.01,
-        format="%.2f",
-        help="用于采购单单价与申报货值精确换算（无尾差）"
-    )
-
-# ==================== 4. 辅助与算法函数 ====================
 def parse_airscript_response(res_data):
     if isinstance(res_data, dict):
         if "data" in res_data and isinstance(res_data["data"], dict) and "result" in res_data["data"]:
@@ -173,6 +140,39 @@ def fetch_purchase_from_airscript(webhook_url, token, timeout=35):
             raise Exception("AirScript 响应成功，但返回的数据表为空！")
         return df
 
+# ==================== 3. 侧边栏（默认折叠，纯工具无废话） ====================
+with st.sidebar:
+    st.subheader("⚙️ 业务配置")
+
+    with st.expander("AirScript 采购单接口", expanded=False):
+        air_webhook = st.text_input(
+            "Webhook 地址",
+            value=DEFAULT_CONFIG["airscript"]["webhook_url"]
+        )
+        air_token = st.text_input(
+            "访问令牌 (Token)",
+            value=DEFAULT_CONFIG["airscript"]["token"],
+            type="password"
+        )
+        if st.button("测试接口", use_container_width=True):
+            try:
+                with st.spinner("测试中..."):
+                    df_test = fetch_purchase_from_airscript(air_webhook, air_token)
+                    st.success(f"连通正常，获取到 {len(df_test)} 条记录")
+            except Exception as e:
+                st.error(f"连接失败: {str(e)}")
+
+    exchange_rate = st.number_input(
+        "美元汇率 (USD/CNY)",
+        min_value=0.1,
+        max_value=20.0,
+        value=7.20,
+        step=0.01,
+        format="%.2f",
+        help="用于采购单单价与申报货值精确换算（无尾差）"
+    )
+
+# ==================== 4. 辅助与算法函数 ====================
 FOOTER_KEYWORDS = [
     '合计', '总计', 'Total', 'SUM', 'Sum',
     '备注', 'Remark', 'Comments',
@@ -781,29 +781,38 @@ with tab2:
                         df_clean[col].astype(str).str.replace(',', '').str.strip(), errors='coerce'
                     ).fillna(0)
 
-            for col in [addr_col, prod_col, unit_col, fba_col]:
+            orig_columns = list(df_clean.columns)
+            for col in [addr_col, prod_col, unit_col, fba_col, "供应商"]:
                 if col in df_clean.columns:
-                    df_clean[col] = df_clean[col].astype(str).str.strip()
+                    df_clean[col] = df_clean[col].fillna("").astype(str).str.strip()
+                    df_clean[col] = df_clean[col].replace({"nan": "", "None": ""})
 
             df_clean[addr_col] = df_clean[addr_col].astype(str).apply(
                 lambda x: re.sub(r'[\(（].*?[\\)）]', '', x).strip()
             )
-            df_clean = df_clean[df_clean[addr_col].notna() & (df_clean[addr_col] != 'nan') & (df_clean[addr_col] != '')]
+            df_clean = df_clean[df_clean[addr_col].notna() & (df_clean[addr_col] != 'nan') & (df_clean[addr_col] != '')].copy()
+
+            def _build_disp_key(row):
+                addr = str(row[addr_col]).strip()
+                fba_val = str(row.get(fba_col, '')).strip() if fba_col in row else ''
+                return f"{addr}({fba_val})" if (fba_val and fba_val.lower() != 'nan') else addr
+
+            df_clean["_disp_key"] = df_clean.apply(_build_disp_key, axis=1)
 
             address_list = []
-            address_mapping = {}
             fba_display_map = {}
             seen_display = set()
 
             for _, row in df_clean.iterrows():
-                addr = row[addr_col]
                 fba_val = row.get(fba_col, '').strip() if fba_col in row else ''
-                disp = f"{addr}({fba_val})" if (fba_val and fba_val != 'nan') else addr
+                disp = row["_disp_key"]
                 if disp not in seen_display:
                     seen_display.add(disp)
                     address_list.append(disp)
-                    address_mapping[disp] = addr
-                    if fba_val: fba_display_map[fba_val] = disp
+                if fba_val and fba_val.lower() != 'nan':
+                    fba_display_map.setdefault(fba_val, [])
+                    if disp not in fba_display_map[fba_val]:
+                        fba_display_map[fba_val].append(disp)
 
             col_left, col_right = st.columns(2)
 
@@ -824,9 +833,9 @@ with tab2:
                         for line in pasted_fbas.splitlines():
                             fba_code = line.strip()
                             if fba_code in fba_display_map:
-                                disp = fba_display_map[fba_code]
-                                if disp not in current_items:
-                                    current_items.append(disp)
+                                for disp in fba_display_map[fba_code]:
+                                    if disp not in current_items:
+                                        current_items.append(disp)
                     if current_items:
                         st.session_state['merger_groups'].append(current_items)
                         st.session_state['tab2_merged_result'] = None
@@ -858,6 +867,11 @@ with tab2:
                         st.rerun()
 
             if st.session_state['merger_groups']:
+                split_by_supplier = st.checkbox(
+                    "按供应商区分合并（不同供应商的同名产品分开汇总，不拼在同一行）",
+                    value=True,
+                    key="tab2_split_supplier"
+                )
                 if st.button("🚀 开始合并数据并打包", type="primary", use_container_width=True):
                     try:
                         total_grps = len(st.session_state['merger_groups'])
@@ -866,14 +880,22 @@ with tab2:
                         wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
                         ws = wb["汇总"]
 
+                        def _join_clean_unique(series):
+                            vals = []
+                            for v in pd.Series(series).dropna():
+                                s = str(v).strip()
+                                if s and s.lower() not in ('nan', 'none') and s not in vals:
+                                    vals.append(s)
+                            return ' '.join(vals)
+
                         for g_idx, grp in enumerate(st.session_state['merger_groups'], start=1):
                             pbar.progress(
                                 int((g_idx - 1) / total_grps * 100),
                                 text=f"[{g_idx}/{total_grps}] 正在合并组 {g_idx}（共 {len(grp)} 个货件）..."
                             )
 
-                            valid_addrs = [address_mapping[item] for item in grp if item in address_mapping]
-                            filtered = df_clean[df_clean[addr_col].isin(valid_addrs)].copy()
+                            # 严格按所选的「物流中心编码(FBA编号)」精确匹配，避免同仓库未勾选货件及其供应商混入
+                            filtered = df_clean[df_clean["_disp_key"].isin(grp)].copy()
                             if filtered.empty:
                                 continue
 
@@ -883,25 +905,34 @@ with tab2:
                                     s_idx = item.rfind('(') + 1
                                     e_idx = item.rfind(')')
                                     if e_idx > s_idx:
-                                        full_fba_list.append(item[s_idx:e_idx].strip())
+                                        fba_extracted = item[s_idx:e_idx].strip()
+                                        if fba_extracted and fba_extracted not in full_fba_list:
+                                            full_fba_list.append(fba_extracted)
                             FULL_FBA = ' '.join(full_fba_list).strip()
+
+                            group_cols = [prod_col, unit_col]
+                            if split_by_supplier and '供应商' in filtered.columns:
+                                group_cols.append('供应商')
 
                             agg_dict = {
                                 '箱数': 'sum', '数量': 'sum', '毛重KGS': 'sum', '净重KGS': 'sum',
                                 '体积': 'sum', '货值': 'sum', '金额USD': 'sum',
-                                'HS编码': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
+                                'HS编码': _join_clean_unique,
                                 fba_col: lambda x: FULL_FBA,
-                                '中英文品名': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '申报要素(品牌,材质,用途)': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                'CTNS': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '币制': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '境内货源地': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '供应商': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '合同号': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique()),
-                                '账号': lambda x: ' '.join(pd.Series(x).dropna().astype(str).unique())
+                                '中英文品名': _join_clean_unique,
+                                '申报要素(品牌,材质,用途)': _join_clean_unique,
+                                'CTNS': _join_clean_unique,
+                                '币制': _join_clean_unique,
+                                '境内货源地': _join_clean_unique,
+                                '供应商': _join_clean_unique,
+                                '合同号': _join_clean_unique,
+                                '账号': _join_clean_unique
                             }
-                            agg_dict = {k: v for k, v in agg_dict.items() if k in filtered.columns}
-                            df_group = filtered.groupby([prod_col, unit_col], as_index=False).agg(agg_dict)
+                            agg_dict = {
+                                k: v for k, v in agg_dict.items()
+                                if k in filtered.columns and k not in group_cols
+                            }
+                            df_group = filtered.groupby(group_cols, as_index=False, dropna=False).agg(agg_dict)
 
                             for c in ['箱数', '数量', '毛重KGS', '净重KGS', '体积', '货值', '金额USD']:
                                 if c in df_group.columns:
@@ -912,7 +943,7 @@ with tab2:
 
                             for _, row in df_group.iterrows():
                                 row_idx = ws.max_row + 1
-                                for col_idx, col_name in enumerate(df_clean.columns, start=1):
+                                for col_idx, col_name in enumerate(orig_columns, start=1):
                                     ws.cell(row=row_idx, column=col_idx, value=row.get(col_name, ""))
 
                         pbar.progress(100, text="合并完成！已生成下载文件。")
