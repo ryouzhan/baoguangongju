@@ -869,7 +869,7 @@ with tab2:
             if st.session_state['merger_groups']:
                 split_by_supplier = st.checkbox(
                     "按供应商区分合并（不同供应商的同名产品分开汇总，不拼在同一行）",
-                    value=True ,
+                    value=False ,
                     key="tab2_split_supplier"
                 )
                 if st.button("🚀 开始合并数据并打包", type="primary", use_container_width=True):
